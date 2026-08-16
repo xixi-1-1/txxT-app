@@ -1,7 +1,7 @@
 /* TxxT 公考备考工作台 · Service Worker
  * 离线缓存应用壳；index.html 用 network-first 保证云端更新能生效，离线时回退缓存。
  */
-const CACHE = 'txxT_app_v4';
+const CACHE = 'txxT_app_v5';
 const ASSETS = [
   './',
   './index.html',
@@ -34,7 +34,7 @@ self.addEventListener('fetch', function (e) {
   const isHtml = url.pathname.endsWith('index.html') || url.pathname === '/' || url.pathname === '';
   if (url.origin === self.location.origin && isHtml) {
     e.respondWith(
-      fetch(req).then(function (r) {
+      fetch(req, {cache:'no-cache'}).then(function (r) {
         const cp = r.clone();
         caches.open(CACHE).then(function (c) { c.put(req, cp); });
         return r;
