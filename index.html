@@ -21,7 +21,7 @@
 })();
 </script>
 <title>TxxT · 成为岸上人</title>
-<!-- deploy: synced to GitHub Pages 2026-08-16T12:35 -->
+<!-- deploy: synced to GitHub Pages 2026-08-16T12:45 -->
 <style>html,body{background:#fbeaf2;margin:0;}</style>
 <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
@@ -1218,7 +1218,7 @@ document.addEventListener('change',e=>{
 
 /* ====================== 试卷 ====================== */
 const PTYPES=[{k:'xingce',name:'行测'},{k:'zhice',name:'职测'},{k:'shenlun',name:'申论'},{k:'zongying',name:'综应'}];
-let curPT='xingce', paperChart=null;
+let curPT='xingce', paperChart=null, editingPaperId=null;
 function renderPaperPage(){
   document.getElementById('ptabs').innerHTML = PTYPES.map(p=>
     `<button class="ptab ${p.k===curPT?'on':''}" onclick="curPT='${p.k}';renderPaperPage()">${p.name}</button>`).join('');
@@ -1265,7 +1265,8 @@ function renderPaperPage(){
         </div></div>
       <div class="parts">${parts}</div>
       <textarea placeholder="备注错题与遗忘知识点，方便总结…" oninput="paperNote('${p.id}',this.value)">${esc(p.note||'')}</textarea>
-      <div class="row" style="margin-top:8px;justify-content:flex-end">
+      <div class="row" style="margin-top:8px;justify-content:flex-end;gap:8px">
+        <button class="btn ghost sm" onclick="openPaperDetail('${p.id}')">查看详情</button>
         <button class="btn danger sm" onclick="delPaper('${p.id}')">删除试卷</button>
       </div>
     </div>`;
@@ -1295,6 +1296,7 @@ function delPaper(id){
   S.papers[curPT]=S.papers[curPT].filter(x=>x.id!==id); save(); renderPaperPage(); toast('已删除');
 }
 function openPaperForm(){
+  editingPaperId=null;
   const defParts = (curPT==='xingce'||curPT==='zhice')
   ? [['言语理解',''],['判断推理',''],['数量关系',''],['资料分析',''],['常识','']]
   : (curPT==='shenlun' ? [['概括题',''],['对策/分析题',''],['大作文','']] : [['第一题',''],['第二题','']]);
@@ -1323,11 +1325,38 @@ function openPaperForm(){
       <button class="btn ghost" style="flex:1" onclick="closeModal()">取消</button>
     </div>`);
 }
-function partRowHtml(name){
+function openPaperDetail(id){
+  let rec=null;
+  for(const k in S.papers){ const p=S.papers[k].find(x=>x.id===id); if(p){rec=p;break;} }
+  if(!rec) return toast('未找到该记录');
+  editingPaperId=id;
+  const label = (curPT==='xingce'||curPT==='zhice')?'（题数 / 正确数）':'（满分 / 得分）';
+  const rows = (rec.parts&&rec.parts.length ? rec.parts : [{name:'',total:'',correct:''}])
+    .map(pt=>partRowHtml(pt.name, pt.total, pt.correct)).join('');
+  openModal(`
+    <h3>查看 / 修改试卷明细</h3>
+    <div class="field"><label>试卷名称</label><input id="pfName" value="${esc(rec.name)}"></div>
+    <div class="grid2">
+      <div class="field"><label>做题日期</label><input type="date" id="pfDate" value="${rec.date}"></div>
+      <div class="field"><label>做题用时</label><input id="pfDur" value="${esc(rec.duration||'')}"></div>
+    </div>
+    <div class="field"><label>总分</label><input type="number" id="pfScore" step="0.5" value="${rec.score}"></div>
+    <div class="field"><label>平均分</label><input type="number" id="pfAvg" step="0.01" placeholder="选填，如 0.85 或板块均分" value="${rec.avg!=null?rec.avg:''}"></div>
+    <div class="field"><label>板块得分 ${label}</label>
+      <div id="pfParts">${rows}</div>
+      <button class="btn ghost sm" onclick="addPartRow()">＋ 添加板块</button>
+    </div>
+    <div class="field"><label>错题 / 遗忘知识点备注</label><textarea id="pfNote">${esc(rec.note||'')}</textarea></div>
+    <div class="row">
+      <button class="btn" style="flex:1" onclick="savePaper()">保存修改</button>
+      <button class="btn ghost" style="flex:1" onclick="closeModal()">取消</button>
+    </div>`);
+}
+function partRowHtml(name, total, correct){
   return `<div class="part-row">
     <input placeholder="板块名" value="${esc(name||'')}">
-    <input type="number" placeholder="总数" min="0" step="0.5">
-    <input type="number" placeholder="对/得" min="0" step="0.5">
+    <input type="number" placeholder="总数" min="0" step="0.5" value="${total!=null?total:''}">
+    <input type="number" placeholder="对/得" min="0" step="0.5" value="${correct!=null?correct:''}">
     <button class="plan-del" onclick="this.parentNode.remove()">✕</button>
   </div>`;
 }
@@ -1348,6 +1377,14 @@ function savePaper(){
     const n=inp[0].value.trim(), t=parseFloat(inp[1].value), c=parseFloat(inp[2].value);
     if(n && !isNaN(t) && !isNaN(c)) parts.push({name:n,total:t,correct:c});
   });
+  if(editingPaperId){
+    for(const k in S.papers){ const p=S.papers[k].find(x=>x.id===editingPaperId); if(p){
+      p.name=name; p.date=date; p.score=score; p.avg=avg;
+      p.duration=document.getElementById('pfDur').value.trim();
+      p.parts=parts; p.note=document.getElementById('pfNote').value;
+      save(); closeModal(); editingPaperId=null; renderPaperPage(); toast('✅ 已更新'); return;
+    }}
+  }
   S.papers[curPT].push({id:uid(), name, date, score, avg,
     duration:document.getElementById('pfDur').value.trim(),
     parts, note:document.getElementById('pfNote').value});
