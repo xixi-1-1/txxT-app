@@ -1,7 +1,7 @@
 /* TxxT 公考备考工作台 · Service Worker
  * 离线缓存应用壳；index.html 用 network-first 保证云端更新能生效，离线时回退缓存。
  */
-const CACHE = 'txxT_app_v5';
+const CACHE = 'txxT_app_v6';
 const ASSETS = [
   './',
   './index.html',
