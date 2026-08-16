@@ -21,7 +21,7 @@
 })();
 </script>
 <title>TxxT · 成为岸上人</title>
-<!-- deploy: synced to GitHub Pages 2026-08-16T11:53 -->
+<!-- deploy: synced to GitHub Pages 2026-08-16T12:20 -->
 <style>html,body{background:#fbeaf2;margin:0;}</style>
 <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
@@ -156,6 +156,14 @@ input[type=date].date-pill,input[type=month].date-pill{
 .paper .part{font-size:11px;padding:4px 8px;border-radius:8px;color:#fff;}
 .paper textarea{margin-top:8px;font-size:13px;min-height:52px;}
 .part-row{display:grid;grid-template-columns:1.4fr 1fr 1fr auto;gap:6px;margin-bottom:6px;align-items:center;}
+.paper .pscore{flex-direction:column;align-items:flex-end;gap:3px;}
+.paper .pscore .line{display:flex;align-items:center;gap:4px;}
+.paper .pscore .lab{font-size:11px;color:var(--sub);font-weight:400;white-space:nowrap;}
+.paper .pscore input{width:58px;font-size:14px;font-weight:800;text-align:center;border:1px solid var(--line);border-radius:8px;padding:3px 2px;color:#b0736f;background:#fff;}
+.paper .pscore input:focus{outline:none;border-color:var(--accent);}
+.alarm-row{display:flex;justify-content:space-between;align-items:center;margin:10px 0 0;font-size:13px;color:var(--sub);}
+.sound-toggle{cursor:pointer;color:var(--accent);font-weight:600;user-select:none;padding:2px 4px;}
+.sound-toggle.off{color:var(--sub);}
 
 /* 积累 */
 .acc-item{border-left:4px solid var(--shen);background:#fdfbfa;border-radius:0 12px 12px 0;padding:10px 12px;margin-bottom:10px;}
@@ -298,6 +306,7 @@ nav.side.collapsed .sb-title{font-size:15px;text-align:center;}
       </div>
       <div class="chips" id="secChips"></div>
       <div class="timer-sec-label" id="timerLabel" style="margin-top:12px">— 选择板块开始专注 —</div>
+      <div class="alarm-row"><span>⏰ 倒计时提示音（剩15/5分·结束）</span><span class="sound-toggle" id="soundToggle" onclick="toggleSound()">开启</span></div>
       <div class="timer-disp" id="timerDisp">25:00</div>
       <div class="timer-btns">
         <button class="btn" id="btnStart">开始</button>
@@ -624,15 +633,17 @@ function doAddExam(c){
 
 /* ====================== 番茄钟 ====================== */
 let tMode='down', tTotal=25*60, tSec=null, tTimer=null, tRunning=false, tStartTs=null, tAccum=0;
+let af15=false, af5=false;
 const TT_KEY='txxT_timer';
 function saveTimerState(){
-  try{ localStorage.setItem(TT_KEY, JSON.stringify({tRunning,tMode,tTotal,tSec,tStartTs,tAccum})); }catch(e){}
+  try{ localStorage.setItem(TT_KEY, JSON.stringify({tRunning,tMode,tTotal,tSec,tStartTs,tAccum,af15,af5})); }catch(e){}
 }
 function restoreTimerState(){
   try{
     const j=JSON.parse(localStorage.getItem(TT_KEY)||'null');
     if(!j) return;
     tMode=j.tMode||'down'; tTotal=j.tTotal||25*60; tSec=j.tSec||null; tAccum=j.tAccum||0; tStartTs=j.tStartTs||null;
+    af15=j.af15||false; af5=j.af5||false;
     renderModeChips(); renderDurChips(); renderSecChips();
     if(j.tSec && secMap[j.tSec]) document.getElementById('timerLabel').textContent='当前板块：'+secMap[j.tSec].name;
     if(j.tRunning && tStartTs){
@@ -646,12 +657,70 @@ function restoreTimerState(){
       }
       tRunning=true; document.getElementById('btnStart').textContent='暂停';
       tickTimer();
+      checkAlarm();
       if(tTimer) clearInterval(tTimer);
       tTimer=setInterval(tickTimer,1000);
     }
     updDisp();
   }catch(e){}
 }
+/* ---- 提示音与倒计时分级告警 ---- */
+let audioCtx=null, soundOn = (localStorage.getItem('txxT_sound')!=='0');
+function ensureAudio(){
+  try{
+    if(!audioCtx){ const AC=window.AudioContext||window.webkitAudioContext; if(AC) audioCtx=new AC(); }
+    if(audioCtx && audioCtx.state==='suspended') audioCtx.resume();
+  }catch(e){}
+}
+function beep(seq){
+  if(!soundOn) return;
+  ensureAudio(); if(!audioCtx) return;
+  let t=audioCtx.currentTime;
+  seq.forEach(n=>{
+    const o=audioCtx.createOscillator(), g=audioCtx.createGain();
+    o.type='sine'; o.frequency.value=n.f; o.connect(g); g.connect(audioCtx.destination);
+    g.gain.setValueAtTime(0.0001,t);
+    g.gain.exponentialRampToValueAtTime(0.35,t+0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+n.d);
+    o.start(t); o.stop(t+n.d+0.03);
+    t += n.d + (n.gap||0.09);
+  });
+}
+function alarmBeep(kind){
+  if(kind==='15') beep([{f:880,d:0.16},{f:880,d:0.16}]);
+  else if(kind==='5') beep([{f:1046,d:0.18},{f:1046,d:0.18},{f:1046,d:0.18}]);
+  else beep([{f:660,d:0.28},{f:880,d:0.28},{f:1100,d:0.42}]); // 结束
+}
+function notifyAlarm(body){
+  try{
+    if('Notification' in window && Notification.permission==='granted'){
+      new Notification('TxxT 番茄钟', {body, tag:'txxT-alarm'});
+    }
+  }catch(e){}
+}
+function requestNotif(){
+  try{ if('Notification' in window && Notification.permission==='default') Notification.requestPermission(); }catch(e){}
+}
+function checkAlarm(){
+  if(!tRunning || tMode!=='down') return;
+  const rem = tTotal - curElapsed();
+  if(rem<=0) return;
+  if(rem<=15*60 && !af15){ af15=true; alarmBeep('15'); notifyAlarm('倒计时还剩 15 分钟'); toast('⏰ 倒计时还剩 15 分钟'); saveTimerState(); }
+  if(rem<=5*60 && !af5){ af5=true; alarmBeep('5'); notifyAlarm('倒计时还剩 5 分钟'); toast('⏰ 倒计时还剩 5 分钟'); saveTimerState(); }
+}
+function renderSoundToggle(){
+  const el=document.getElementById('soundToggle'); if(!el) return;
+  el.textContent = soundOn?'开启':'关闭';
+  el.classList.toggle('off', !soundOn);
+}
+function toggleSound(){
+  soundOn = !soundOn;
+  localStorage.setItem('txxT_sound', soundOn?'1':'0');
+  renderSoundToggle();
+  if(soundOn){ ensureAudio(); beep([{f:880,d:0.12}]); toast('提示音已开启'); }
+  else toast('提示音已关闭');
+}
+
 function renderModeChips(){
   document.getElementById('modeChips').innerHTML =
     `<button class="chip ${tMode==='down'?'on':''}" onclick="pickMode('down')">倒计时</button>`+
@@ -745,7 +814,7 @@ function updDisp(){
   const v = tMode==='down' ? Math.max(0, tTotal - curElapsed()) : curElapsed();
   document.getElementById('timerDisp').textContent = pad(Math.floor(v/60))+':'+pad(v%60);
 }
-function resetTimer(){ tStartTs=null; tAccum=0; updDisp(); }
+function resetTimer(){ tStartTs=null; tAccum=0; af15=false; af5=false; updDisp(); }
 function minFromSec(sec){ if(sec<=0) return 0; return Math.max(0.1, Math.round(sec/6)/10); }
 function fmtMin(min){
   if(Number.isInteger(min)) return min+' 分钟';
@@ -755,15 +824,22 @@ function fmtMin(min){
 }
 function tickTimer(){
   if(!tRunning) return;
-  if(tMode==='down' && curElapsed() >= tTotal){
-    clearInterval(tTimer); tRunning=false; document.getElementById('btnStart').textContent='开始';
-    const recorded=minFromSec(tTotal);
-    recordSession(today(), tSec, recorded, '番茄钟'); resetTimer();
-    toast('🎉 专注完成，已记录 '+fmtMin(recorded));
-  } else { updDisp(); }
+  if(tMode==='down'){
+    if(curElapsed() < tTotal) checkAlarm();
+    if(curElapsed() >= tTotal){
+      clearInterval(tTimer); tRunning=false; document.getElementById('btnStart').textContent='开始';
+      alarmBeep('end'); notifyAlarm('专注时间到！');
+      const recorded=minFromSec(tTotal);
+      recordSession(today(), tSec, recorded, '番茄钟'); resetTimer();
+      toast('🎉 专注完成，已记录 '+fmtMin(recorded));
+      return;
+    }
+  }
+  updDisp();
 }
 document.getElementById('btnStart').onclick = function(){
   if(!tSec) return toast('请先选择板块');
+  ensureAudio(); requestNotif();
   if(tRunning){ tAccum = curElapsed(); clearInterval(tTimer); tRunning=false; this.textContent='继续'; saveTimerState(); return; }
   tRunning=true; this.textContent='暂停';
   tStartTs = Date.now();
@@ -785,10 +861,14 @@ document.getElementById('btnReset').onclick = function(){
   resetTimer(); saveTimerState();
 };
 document.addEventListener('visibilitychange', ()=>{
-  if(!document.hidden && tRunning){
-    tickTimer();
-    if(tTimer) clearInterval(tTimer);
-    tTimer=setInterval(tickTimer,1000);
+  if(!document.hidden){
+    ensureAudio();
+    if(tRunning){
+      checkAlarm();
+      tickTimer();
+      if(tTimer) clearInterval(tTimer);
+      tTimer=setInterval(tickTimer,1000);
+    }
   }
 });
 function recordSession(date, sec, minutes, source){
@@ -1151,11 +1231,17 @@ function renderPaperPage(){
   if(has && typeof Chart!=='undefined'){
     paperChart = new Chart(document.getElementById('paperChart'),{
       type:'line',
-      data:{labels:list.map(p=>p.date.slice(5)), datasets:[{label:'分数', data:list.map(p=>p.score),
-        borderColor:'#8a9bb0', backgroundColor:'rgba(138,155,176,.12)', fill:true, tension:.3,
-        pointBackgroundColor:'#c98b8b', pointRadius:4}]},
+      data:{labels:list.map(p=>p.date.slice(5)), datasets:[
+        {label:'分数', data:list.map(p=>p.score),
+          borderColor:'#8a9bb0', backgroundColor:'rgba(138,155,176,.12)', fill:true, tension:.3,
+          pointBackgroundColor:'#c98b8b', pointRadius:4},
+        {label:'平均分', data:list.map(p=>(p.avg!=null && p.avg!=='' ? p.avg : null)),
+          borderColor:'#e0a8c0', backgroundColor:'rgba(224,168,192,.12)', fill:false, tension:.3,
+          borderDash:[5,4], pointBackgroundColor:'#e0a8c0', pointRadius:4, spanGaps:true}
+      ]},
       options:{responsive:true,maintainAspectRatio:false,
-        plugins:{legend:{display:false},tooltip:{callbacks:{title:i=>list[i[0].dataIndex].name,label:c=>'分数: '+c.parsed.y}}},
+        plugins:{legend:{display:true, labels:{boxWidth:12, font:{size:11}}},
+          tooltip:{callbacks:{title:i=>list[i[0].dataIndex].name, label:c=>c.dataset.label+': '+(c.parsed.y==null?'—':c.parsed.y)}}},
         scales:{y:{beginAtZero:false}}}
     });
   }
@@ -1169,7 +1255,14 @@ function renderPaperPage(){
     return `<div class="paper">
       <div class="ph"><div><div class="pname">${esc(p.name)}</div>
         <div class="pmeta">${p.date} · 用时 ${esc(p.duration||'—')}</div></div>
-        <div class="pscore">${p.score}<span style="font-size:12px;color:var(--sub)"> 分</span></div></div>
+        <div class="pscore">
+          <div class="line"><span class="lab">总分</span>
+            <input type="number" step="0.5" value="${p.score}" onchange="paperEdit('${p.id}','score',this.value)">
+            <span class="lab">分</span></div>
+          <div class="line"><span class="lab">均分</span>
+            <input type="number" step="0.01" placeholder="—" value="${p.avg!=null?p.avg:''}" onchange="paperEdit('${p.id}','avg',this.value)">
+            <span class="lab">${p.avg!=null?'均':''}</span></div>
+        </div></div>
       <div class="parts">${parts}</div>
       <textarea placeholder="备注错题与遗忘知识点，方便总结…" oninput="paperNote('${p.id}',this.value)">${esc(p.note||'')}</textarea>
       <div class="row" style="margin-top:8px;justify-content:flex-end">
@@ -1187,6 +1280,15 @@ function guessColor(name){
 }
 function paperNote(id,val){
   for(const k in S.papers){ const p=S.papers[k].find(x=>x.id===id); if(p){p.note=val;save();return;} }
+}
+function paperEdit(id, field, raw){
+  const v = raw.trim()==='' ? null : parseFloat(raw);
+  if(v!=null && isNaN(v)){ toast('请输入有效数字'); return; }
+  for(const k in S.papers){ const p=S.papers[k].find(x=>x.id===id); if(p){
+    if(field==='score'){ if(v!=null) p.score = v<0?0:v; }
+    if(field==='avg'){ p.avg = v; }
+    save(); renderPaperPage(); return;
+  }}
 }
 function delPaper(id){
   if(!confirm('确定删除这套试卷记录吗？'))return;
@@ -1210,6 +1312,7 @@ function openPaperForm(){
       <div class="field"><label>做题用时</label><input id="pfDur" placeholder="如 120 分钟"></div>
     </div>
     <div class="field"><label>总分</label><input type="number" id="pfScore" placeholder="如 68.5" step="0.5"></div>
+    <div class="field"><label>平均分</label><input type="number" id="pfAvg" placeholder="选填，如 0.85 或板块均分" step="0.01"></div>
     <div class="field"><label>板块得分 ${label}</label>
       <div id="pfParts">${rows}</div>
       <button class="btn ghost sm" onclick="addPartRow()">＋ 添加板块</button>
@@ -1233,16 +1336,19 @@ function savePaper(){
   const name=document.getElementById('pfName').value.trim();
   const date=document.getElementById('pfDate').value;
   const score=parseFloat(document.getElementById('pfScore').value);
+  const avgRaw=document.getElementById('pfAvg').value.trim();
+  const avg = avgRaw==='' ? null : parseFloat(avgRaw);
   if(!name) return toast('请填写试卷名称');
   if(!date) return toast('请选择日期');
   if(isNaN(score)) return toast('请填写总分');
+  if(avgRaw!=='' && isNaN(avg)) return toast('平均分需为数字');
   const parts=[];
   document.querySelectorAll('#pfParts .part-row').forEach(r=>{
     const inp=r.querySelectorAll('input');
     const n=inp[0].value.trim(), t=parseFloat(inp[1].value), c=parseFloat(inp[2].value);
     if(n && !isNaN(t) && !isNaN(c)) parts.push({name:n,total:t,correct:c});
   });
-  S.papers[curPT].push({id:uid(), name, date, score,
+  S.papers[curPT].push({id:uid(), name, date, score, avg,
     duration:document.getElementById('pfDur').value.trim(),
     parts, note:document.getElementById('pfNote').value});
   save(); closeModal(); renderPaperPage(); toast('✅ 已保存');
@@ -1435,6 +1541,7 @@ function fallbackCopy(text){
     var id = cur ? cur.id.replace('page-','') : 'home';
     if(id==='stats') renderStats();
     else if(id==='paper') renderPaperPage();
+    renderSoundToggle();
   });
   // 注册 Service Worker：支持“添加到主屏幕”安装为 App，并离线可用
   if('serviceWorker' in navigator){
